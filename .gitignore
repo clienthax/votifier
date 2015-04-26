@@ -1,3 +1,9 @@
+# Forge testing
+run
+
+# Gradle
+.gradle
+
 # Eclipse stuff
 /.classpath
 /.project

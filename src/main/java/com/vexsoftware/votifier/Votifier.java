@@ -18,19 +18,38 @@
 
 package com.vexsoftware.votifier;
 
-import java.io.*;
-import java.security.KeyPair;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.logging.*;
-import org.bukkit.Bukkit;
-import org.bukkit.configuration.file.YamlConfiguration;
-import org.bukkit.plugin.java.JavaPlugin;
+import com.vexsoftware.votifier.crypto.KeyCreator;
 import com.vexsoftware.votifier.crypto.RSAIO;
 import com.vexsoftware.votifier.crypto.RSAKeygen;
-import com.vexsoftware.votifier.model.ListenerLoader;
-import com.vexsoftware.votifier.model.VoteListener;
-import com.vexsoftware.votifier.net.VoteReceiver;
+import com.vexsoftware.votifier.net.VoteInboundHandler;
+import com.vexsoftware.votifier.net.VotifierSession;
+import com.vexsoftware.votifier.net.protocol.VotifierGreetingHandler;
+import com.vexsoftware.votifier.net.protocol.VotifierProtocolDifferentiator;
+import io.netty.bootstrap.ServerBootstrap;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.channel.socket.nio.NioSocketChannel;
+import net.minecraft.server.MinecraftServer;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.common.event.FMLInitializationEvent;
+import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
+import net.minecraftforge.fml.common.event.FMLServerStoppingEvent;
+import ninja.leaping.configurate.ConfigurationNode;
+import ninja.leaping.configurate.loader.ConfigurationLoader;
+import ninja.leaping.configurate.yaml.YAMLConfigurationLoader;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.Logger;
+
+import java.io.File;
+import java.io.IOException;
+import java.security.Key;
+import java.security.KeyPair;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * The main Votifier plugin class.
@@ -38,10 +57,11 @@ import com.vexsoftware.votifier.net.VoteReceiver;
  * @author Blake Beaupain
  * @author Kramer Campbell
  */
-public class Votifier extends JavaPlugin {
+@Mod(name = "Votifier", serverSideOnly = true, acceptableRemoteVersions = "*", modid = "votifier", version = "2.0")
+public class Votifier {
 
 	/** The logger instance. */
-	private static final Logger LOG = Logger.getLogger("Votifier");
+	private static org.apache.logging.log4j.Logger LOG;
 
 	/** Log entry prefix */
 	private static final String logPrefix = "[Votifier] ";
@@ -49,14 +69,11 @@ public class Votifier extends JavaPlugin {
 	/** The Votifier instance. */
 	private static Votifier instance;
 
-	/** The current Votifier version. */
-	private String version;
+	/** The server channel. */
+	private Channel serverChannel;
 
-	/** The vote listeners. */
-	private final List<VoteListener> listeners = new ArrayList<VoteListener>();
-
-	/** The vote receiver. */
-	private VoteReceiver voteReceiver;
+	/** The event group handling the channel. */
+	private NioEventLoopGroup serverGroup;
 
 	/** The RSA key pair. */
 	private KeyPair keyPair;
@@ -64,30 +81,36 @@ public class Votifier extends JavaPlugin {
 	/** Debug mode flag */
 	private boolean debug;
 
-	/**
-	 * Attach custom log filter to logger.
-	 */
-	static {
-		LOG.setFilter(new LogFilter(logPrefix));
+	/** Keys used for websites. */
+	private Map<String, Key> tokens = new HashMap<>();
+
+	/** Folder containing config */
+	private File modConfigFolder;
+
+	public File getDataFolder() {
+		return modConfigFolder;
 	}
 
-	@Override
-	public void onEnable() {
+	@Mod.EventHandler
+	public void onPreInit(FMLPreInitializationEvent event) {
 		Votifier.instance = this;
+		LOG = event.getModLog();
+		modConfigFolder = new File(event.getModConfigurationDirectory(), "Votifier");
+		System.out.println(modConfigFolder.getAbsolutePath());
+	}
 
-		// Set the plugin version.
-		version = getDescription().getVersion();
+	@Mod.EventHandler
+	public void onInit(FMLInitializationEvent event) throws IOException {
 
 		// Handle configuration.
 		if (!getDataFolder().exists()) {
 			getDataFolder().mkdir();
 		}
+
 		File config = new File(getDataFolder() + "/config.yml");
-		YamlConfiguration cfg = YamlConfiguration.loadConfiguration(config);
+		ConfigurationLoader loader = YAMLConfigurationLoader.builder().setFile(config).build();
+		ConfigurationNode cfg = loader.load();
 		File rsaDirectory = new File(getDataFolder() + "/rsa");
-		// Replace to remove a bug with Windows paths - SmilingDevil
-		String listenerDirectory = getDataFolder().toString()
-				.replace("\\", "/") + "/listeners";
 
 		/*
 		 * Use IP address from server.properties as a default for
@@ -95,7 +118,7 @@ public class Votifier extends JavaPlugin {
 		 * likely will return the main server address instead of the address
 		 * assigned to the server.
 		 */
-		String hostAddr = Bukkit.getServer().getIp();
+		String hostAddr = MinecraftServer.getServer().getHostname();
 		if (hostAddr == null || hostAddr.length() == 0)
 			hostAddr = "0.0.0.0";
 
@@ -110,31 +133,38 @@ public class Votifier extends JavaPlugin {
 				// Initialize the configuration file.
 				config.createNewFile();
 
-				cfg.set("host", hostAddr);
-				cfg.set("port", 8192);
-				cfg.set("debug", false);
+				cfg.getNode("host").setValue(hostAddr);
+				cfg.getNode("port").setValue(8192);
+				cfg.getNode("debug").setValue(false);
 
 				/*
 				 * Remind hosted server admins to be sure they have the right
 				 * port number.
 				 */
 				LOG.info("------------------------------------------------------------------------------");
-				LOG.info("Assigning Votifier to listen on port 8192. If you are hosting Craftbukkit on a");
+				LOG.info("Assigning Votifier to listen on port 8192. If you are hosting Forge on a");
 				LOG.info("shared server please check with your hosting provider to verify that this port");
 				LOG.info("is available for your use. Chances are that your hosting provider will assign");
 				LOG.info("a different port, which you need to specify in config.yml");
 				LOG.info("------------------------------------------------------------------------------");
 
-				cfg.set("listener_folder", listenerDirectory);
-				cfg.save(config);
+				String token = TokenUtil.newToken();
+				ConfigurationNode tokenSection = cfg.getNode("tokens");
+				tokenSection.getNode("default").setValue(token);
+				LOG.info("Your default Votifier token is " + token + ".");
+				LOG.info("You will need to provide this token when you submit your server to a voting");
+				LOG.info("list.");
+				LOG.info("------------------------------------------------------------------------------");
+
+				loader.save(cfg);
 			} catch (Exception ex) {
-				LOG.log(Level.SEVERE, "Error creating configuration file", ex);
+				LOG.log(Level.FATAL, "Error creating configuration file", ex);
 				gracefulExit();
 				return;
 			}
 		} else {
 			// Load configuration.
-			cfg = YamlConfiguration.loadConfiguration(config);
+			cfg = loader.load();
 		}
 
 		/*
@@ -144,52 +174,76 @@ public class Votifier extends JavaPlugin {
 		try {
 			if (!rsaDirectory.exists()) {
 				rsaDirectory.mkdir();
-				new File(listenerDirectory).mkdir();
 				keyPair = RSAKeygen.generate(2048);
 				RSAIO.save(rsaDirectory, keyPair);
 			} else {
 				keyPair = RSAIO.load(rsaDirectory);
 			}
 		} catch (Exception ex) {
-			LOG.log(Level.SEVERE,
-					"Error reading configuration file or RSA keys", ex);
+			LOG.fatal("Error reading configuration file or RSA tokens", ex);
 			gracefulExit();
 			return;
 		}
 
-		// Load the vote listeners.
-		listenerDirectory = cfg.getString("listener_folder");
-		listeners.addAll(ListenerLoader.load(listenerDirectory));
+		// Load Votifier tokens.
+		ConfigurationNode tokenSection = cfg.getNode("tokens");
+
+		if (tokenSection != null) {
+			Map<Object, ? extends ConfigurationNode> websites = tokenSection.getChildrenMap();
+			for (Map.Entry<Object, ? extends ConfigurationNode> website : websites.entrySet()) {
+				tokens.put((String) website.getKey(), KeyCreator.createKeyFrom(website.getValue().getString()));
+				LOG.info("Loaded token for website: " + website.getKey());
+			}
+		} else {
+			LOG.warn("No websites are listed in your configuration.");
+		}
 
 		// Initialize the receiver.
-		String host = cfg.getString("host", hostAddr);
-		int port = cfg.getInt("port", 8192);
-		debug = cfg.getBoolean("debug", false);
+		String host = cfg.getNode("host").getString(hostAddr);
+		int port = cfg.getNode("port").getInt(8192);
+		debug = cfg.getNode("debug").getBoolean(false);
 		if (debug)
 			LOG.info("DEBUG mode enabled!");
 
-		try {
-			voteReceiver = new VoteReceiver(this, host, port);
-			voteReceiver.start();
+		serverGroup = new NioEventLoopGroup(1);
 
-			LOG.info("Votifier enabled.");
-		} catch (Exception ex) {
-			gracefulExit();
-			return;
-		}
+		new ServerBootstrap()
+				.channel(NioServerSocketChannel.class)
+				.group(serverGroup)
+				.childHandler(new ChannelInitializer<NioSocketChannel>() {
+					@Override
+					protected void initChannel(NioSocketChannel channel) throws Exception {
+						channel.attr(VotifierSession.KEY).set(new VotifierSession());
+						channel.pipeline().addLast("greetingHandler", new VotifierGreetingHandler());
+						channel.pipeline().addLast("protocolDifferentiator", new VotifierProtocolDifferentiator());
+						channel.pipeline().addLast("voteHandler", new VoteInboundHandler());
+					}
+				})
+				.bind(host, port)
+				.addListener(new ChannelFutureListener() {
+					@Override
+					public void operationComplete(ChannelFuture future) throws Exception {
+						if (future.isSuccess()) {
+							serverChannel = future.channel();
+							LOG.info("Votifier enabled.");
+						} else {
+							LOG.fatal("Votifier was not able to bind to " + future.channel().localAddress(), future.cause());
+						}
+					}
+				});
 	}
 
-	@Override
-	public void onDisable() {
-		// Interrupt the vote receiver.
-		if (voteReceiver != null) {
-			voteReceiver.shutdown();
-		}
+	@Mod.EventHandler
+	public void onShutdown(FMLServerStoppingEvent event) {
+		// Shut down the network handlers.
+		if (serverChannel != null)
+			serverChannel.close();
+		serverGroup.shutdownGracefully();
 		LOG.info("Votifier disabled.");
 	}
 
 	private void gracefulExit() {
-		LOG.log(Level.SEVERE, "Votifier did not initialize properly!");
+		LOG.error("Votifier did not initialize properly!");
 	}
 
 	/**
@@ -202,35 +256,15 @@ public class Votifier extends JavaPlugin {
 	}
 
 	/**
-	 * Gets the version.
-	 * 
-	 * @return The version
+	 * Get the logger
 	 */
-	public String getVersion() {
-		return version;
-	}
-
-	/**
-	 * Gets the listeners.
-	 * 
-	 * @return The listeners
-	 */
-	public List<VoteListener> getListeners() {
-		return listeners;
-	}
-
-	/**
-	 * Gets the vote receiver.
-	 * 
-	 * @return The vote receiver
-	 */
-	public VoteReceiver getVoteReceiver() {
-		return voteReceiver;
+	public Logger getLogger() {
+		return LOG;
 	}
 
 	/**
 	 * Gets the keyPair.
-	 * 
+	 *
 	 * @return The keyPair
 	 */
 	public KeyPair getKeyPair() {
@@ -241,4 +275,12 @@ public class Votifier extends JavaPlugin {
 		return debug;
 	}
 
+	public Map<String, Key> getTokens() {
+		return tokens;
+	}
+
+
+	public String getVersion() {
+		return "2.0";
+	}
 }
