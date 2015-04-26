@@ -1,0 +1,91 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        maven {
+            name = "forge"
+            url = "http://files.minecraftforge.net/maven"
+        }
+        maven {
+            name = "sonatype"
+            url = "https://oss.sonatype.org/content/repositories/snapshots/"
+        }
+	//mavenLocal()
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:1.2-SNAPSHOT'
+    }
+}
+
+apply plugin: 'forge'
+
+version = "2.0"
+group= "com.vexsoftware"
+archivesBaseName = "Votifier"
+
+//Honestly if your not using java 8 by now on a server you should be..
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+configurations {
+    shade
+    compile.extendsFrom shade
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    shade 'ninja.leaping.configurate:configurate-yaml:1.1.1'
+    shade 'org.json:json:20141113'
+}
+
+minecraft {
+    version = "1.8-11.14.1.1392"
+    mappings = "snapshot_20150425";
+    replace "@VERSION@", project.version
+    srgExtra "PK: org/json com/vexsoftware/shaded/org/json"
+    srgExtra "PK: org/yaml com/vexsoftware/shaded/org/yaml"
+    srgExtra "PK: com/google com/vexsoftware/shaded/com/google"
+    srgExtra "PK: ninja com/vexsoftware/shaded/ninja"
+
+//    srgExtra "PK: org/json com/vexsoftware/shaded/org/json"
+}
+
+task deobfJar(type: Jar) {
+    from sourceSets.main.output
+    appendix = 'deobf'
+}
+
+task sourceJar(type: Jar) {
+    from sourceSets.main.allSource
+    appendix = 'src'
+}
+
+tasks.build.dependsOn('sourceJar', 'deobfJar')
+
+processResources {
+    from (sourceSets.main.resources.srcDirs) {
+        include '**/*.info'
+         expand 'version':project.version, 'mcversion':project.minecraft.version
+    }
+    from(sourceSets.main.resources.srcDirs) { exclude '**/*.info' }
+}
+
+allprojects {
+    gradle.projectsEvaluated {
+        tasks.withType(JavaCompile) {
+            options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation"
+        }
+    }
+}
+
+jar {
+    includeEmptyDirs = false
+    classifier = 'universal'
+    configurations.shade.each { dep ->
+        from(project.zipTree(dep)){
+            exclude 'META-INF', 'META-INF/**'
+        }
+    }
+}

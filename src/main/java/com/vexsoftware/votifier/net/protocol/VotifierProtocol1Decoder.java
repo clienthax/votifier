@@ -61,7 +61,7 @@ public class VotifierProtocol1Decoder extends ByteToMessageDecoder {
 
         /* Warning for using v1, when v2 is standardizing. */
         if (WARNING) {
-            Votifier.getInstance().getLogger().warning(serviceName + " has sent a protocol 1 message. This version is DEPRECATED and will be removed in a future Votifier release.");
+            Votifier.getInstance().getLogger().warn(serviceName + " has sent a protocol 1 message. This version is DEPRECATED and will be removed in a future Votifier release.");
         }
 
         if (Votifier.getInstance().isDebug())
