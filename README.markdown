@@ -1,35 +1,16 @@
 # Votifier
 
-Votifier is a Bukkit plugin whose purpose is to be notified (aka *votified*) when a vote is made on a Minecraft server top list for the server.  Votifier creates a *lightweight* server that waits for connections by Minecraft server lists and uses a simple protocol to get the required information.  Votifier is *secure*, and makes sure that all vote notifications are delivered by authentic top lists.
+Votifier is a Forge mod whose purpose is to be notified (aka *votified*) when a vote is made on a Minecraft server top list for the server.  Votifier creates a *lightweight* server that waits for connections by Minecraft server lists and uses a simple protocol to get the required information.  Votifier is *secure*, and makes sure that all vote notifications are delivered by authentic top lists.
 
 ## Configuring Votifier
 
 Votifier configures itself the first time it is run.
 
-If you want to customize Votifier, simply the edit `./plugins/votifier/config.yml` file.
+If you want to customize Votifier, simply the edit `./config/votifier/config.yml` file.
 
 ## Writing Vote Listeners
 
-A vote listener implements the `VoteListener` interface which contains an implementation of the `voteMade` method.
-
-A basic vote listener looks something like this:
-
-    import com.vexsoftware.votifier.model.Vote;
-    import com.vexsoftware.votifier.model.VoteListener;
-
-    public class BasicVoteListener implements VoteListener {
-
-	    public void voteMade(Vote vote) {
-		    System.out.println("Received: " + vote);
-	    }
-
-    }
-
-## Compiling Vote Listeners
-
-Vote listeners can be compiled by including Votifier in the class path. For example:
-
-	javac -cp Votifier.jar FlatfileVoteListener.java
+A vote event is now fired on the MinecraftForge event bus, register your listener class with this to recieve the vote event the same way you would for any forge event.
 
 ## Encryption
 
