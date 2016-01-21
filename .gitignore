@@ -1,5 +1,6 @@
 # Forge testing
 run
+.launch
 
 # Gradle
 .gradle

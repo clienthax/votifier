@@ -1,28 +1,26 @@
 buildscript {
     repositories {
-        mavenCentral()
+        jcenter()
         maven {
             name = "forge"
             url = "http://files.minecraftforge.net/maven"
         }
-        maven {
-            name = "sonatype"
-            url = "https://oss.sonatype.org/content/repositories/snapshots/"
-        }
-	//mavenLocal()
+		maven {
+			url = 'https://oss.sonatype.org/content/groups/public' 
+		}
     }
-    dependencies {
-        classpath 'net.minecraftforge.gradle:ForgeGradle:1.2-SNAPSHOT'
+	dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.1-SNAPSHOT'
     }
 }
 
-apply plugin: 'forge'
+apply plugin: 'net.minecraftforge.gradle.forge'
 
 version = "2.0"
 group= "com.vexsoftware"
 archivesBaseName = "Votifier"
 
-//Honestly if your not using java 8 by now on a server you should be..
+//Honestly if your not using java 8 by now on a server you should be...
 sourceCompatibility = 1.8
 targetCompatibility = 1.8
 
@@ -31,38 +29,17 @@ configurations {
     compile.extendsFrom shade
 }
 
-repositories {
-    mavenCentral()
-}
-
 dependencies {
     shade 'ninja.leaping.configurate:configurate-yaml:1.1.1'
     shade 'org.json:json:20141113'
 }
 
 minecraft {
-    version = "1.8-11.14.1.1392"
-    mappings = "snapshot_20150425";
+    version = "1.8.9-11.15.0.1695"
+    runDir = "run"
+    mappings = "stable_20"
     replace "@VERSION@", project.version
-    srgExtra "PK: org/json com/vexsoftware/shaded/org/json"
-    srgExtra "PK: org/yaml com/vexsoftware/shaded/org/yaml"
-    srgExtra "PK: com/google com/vexsoftware/shaded/com/google"
-    srgExtra "PK: ninja com/vexsoftware/shaded/ninja"
-
-//    srgExtra "PK: org/json com/vexsoftware/shaded/org/json"
 }
-
-task deobfJar(type: Jar) {
-    from sourceSets.main.output
-    appendix = 'deobf'
-}
-
-task sourceJar(type: Jar) {
-    from sourceSets.main.allSource
-    appendix = 'src'
-}
-
-tasks.build.dependsOn('sourceJar', 'deobfJar')
 
 processResources {
     from (sourceSets.main.resources.srcDirs) {
